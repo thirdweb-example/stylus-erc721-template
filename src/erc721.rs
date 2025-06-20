@@ -24,6 +24,10 @@ sol_storage! {
         uint256 total_supply;
         PhantomData<T> phantom;
     }
+
+    pub struct Ownable {
+        address owner;
+    }
 }
 
 sol! {
@@ -54,6 +58,43 @@ sol_interface! {
 }
 
 const ERC721_TOKEN_RECEIVER_ID: u32 = 0x150b7a02;
+
+#[public]
+impl Ownable {
+    pub fn owner(&self) -> Result<Address, String> {
+        Ok(self.owner.get())
+    }
+
+    pub fn set_owner(&mut self, new_owner: Address) -> Result<(), String> {
+        self._check_owner()?;
+        self._set_owner(new_owner)?;
+
+        Ok(())
+    }
+}
+
+impl Ownable {
+    pub fn _check_owner(&self) -> Result<(), String> {
+        let msg_sender = self.vm().msg_sender();
+        let owner = self.owner.get();
+
+        if msg_sender != owner {
+            return Err("Not authorized".into());
+        }
+
+        Ok(())
+    }
+
+    pub fn _set_owner(&mut self, new_owner: Address) -> Result<(), String> {
+        if new_owner != Address::ZERO {
+            return Err("Zero address".into());
+        }
+
+        self.owner.set(new_owner);
+        
+        Ok(())
+    }
+}
 
 impl<T: Erc721Params> Erc721<T> {
     fn require_authorized_to_spend(&self, from: Address, token_id: U256) -> Result<(), Erc721Error> {
