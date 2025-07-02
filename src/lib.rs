@@ -34,11 +34,8 @@ sol_storage! {
 #[inherit(Erc721<StylusNFTParams>, Ownable)]
 impl StylusNFT {
     #[constructor]
-    pub fn constructor(&mut self) {
-        let deployer = self.vm().tx_origin();
-        let _ = self.ownable._set_owner(deployer);
-
-        // TODO: initialize name and symbol here
+    pub fn constructor(&mut self, owner: Address) {
+        let _ = self.ownable._set_owner(owner);
     }
 
     pub fn mint(&mut self, to: Address) -> Result<(), String> {
