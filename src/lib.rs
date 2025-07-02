@@ -8,7 +8,7 @@ use alloy_primitives::{U256, Address};
 use stylus_sdk::{
     msg, prelude::*
 };
-use crate::erc721::{Erc721, Erc721Params, Erc721Error};
+use crate::erc721::{Erc721, Erc721Params, Ownable};
 
 struct StylusNFTParams;
 impl Erc721Params for StylusNFTParams {
@@ -16,7 +16,7 @@ impl Erc721Params for StylusNFTParams {
     const SYMBOL: &'static str = "SNFT";
 
     fn token_uri(token_id: U256) -> String {
-        format!("{}{}{}", "https://my-nft-metadata.com/", token_id, ".json")
+        format!("{}{}", "ipfs://base_uri/", token_id) // Update your NFT metadata base URI here
     }
 }
 
@@ -25,29 +25,33 @@ sol_storage! {
     struct StylusNFT {
         #[borrow]
         Erc721<StylusNFTParams> erc721;
+        #[borrow]
+        Ownable ownable;
     }
 }
 
 #[public]
-#[inherit(Erc721<StylusNFTParams>)]
+#[inherit(Erc721<StylusNFTParams>, Ownable)]
 impl StylusNFT {
-    pub fn mint(&mut self) -> Result<(), Erc721Error> {
-        let minter = msg::sender();
-        self.erc721.mint(minter)?;
-        Ok(())
+    #[constructor]
+    pub fn constructor(&mut self) {
+        let deployer = self.vm().tx_origin();
+        let _ = self.ownable._set_owner(deployer);
+
+        // TODO: initialize name and symbol here
     }
 
-    pub fn mint_to(&mut self, to: Address) -> Result<(), Erc721Error> {
+    pub fn mint(&mut self, to: Address) -> Result<(), String> {
         self.erc721.mint(to)?;
         Ok(())
     }
 
-    pub fn burn(&mut self, token_id: U256) -> Result<(), Erc721Error> {
+    pub fn burn(&mut self, token_id: U256) -> Result<(), String> {
         self.erc721.burn(msg::sender(), token_id)?;
         Ok(())
     }
 
-    pub fn total_supply(&mut self) -> Result<U256, Erc721Error> {
+    pub fn total_supply(&self) -> Result<U256, String> {
         Ok(self.erc721.total_supply.get())
     }
 }

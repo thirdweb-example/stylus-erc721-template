@@ -34,21 +34,6 @@ sol! {
     event Transfer(address indexed from, address indexed to, uint256 indexed token_id);
     event Approval(address indexed owner, address indexed approved, uint256 indexed token_id);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-
-    error InvalidTokenId(uint256 token_id);
-    error NotOwner(address from, uint256 token_id, address real_owner);
-    error NotApproved(address owner, address spender, uint256 token_id);
-    error TransferToZero(uint256 token_id);
-    error ReceiverRefused(address receiver, uint256 token_id, bytes4 returned);
-}
-
-#[derive(SolidityError)]
-pub enum Erc721Error {
-    InvalidTokenId(InvalidTokenId),
-    NotOwner(NotOwner),
-    NotApproved(NotApproved),
-    TransferToZero(TransferToZero),
-    ReceiverRefused(ReceiverRefused),
 }
 
 sol_interface! {
@@ -97,14 +82,10 @@ impl Ownable {
 }
 
 impl<T: Erc721Params> Erc721<T> {
-    fn require_authorized_to_spend(&self, from: Address, token_id: U256) -> Result<(), Erc721Error> {
+    fn require_authorized_to_spend(&self, from: Address, token_id: U256) -> Result<(), String> {
         let owner = self.owner_of(token_id)?;
         if from != owner {
-            return Err(Erc721Error::NotOwner(NotOwner {
-                from,
-                token_id,
-                real_owner: owner,
-            }));
+            return Err("Not Owner".into());
         }
 
         if msg::sender() == owner {
@@ -119,22 +100,14 @@ impl<T: Erc721Params> Erc721<T> {
             return Ok(());
         }
 
-        Err(Erc721Error::NotApproved(NotApproved {
-            owner,
-            spender: msg::sender(),
-            token_id,
-        }))
+        return Err("Not approved".into());
     }
 
-    pub fn transfer(&mut self, token_id: U256, from: Address, to: Address) -> Result<(), Erc721Error> {
+    pub fn transfer(&mut self, token_id: U256, from: Address, to: Address) -> Result<(), String> {
         let mut owner = self.owners.setter(token_id);
         let previous_owner = owner.get();
         if previous_owner != from {
-            return Err(Erc721Error::NotOwner(NotOwner {
-                from,
-                token_id,
-                real_owner: previous_owner,
-            }));
+            return Err("Not owner".into());
         }
         owner.set(to);
 
@@ -158,24 +131,16 @@ impl<T: Erc721Params> Erc721<T> {
         from: Address,
         to: Address,
         data: Vec<u8>,
-    ) -> Result<(), Erc721Error> {
+    ) -> Result<(), String> {
         if to.has_code() {
             let receiver = IERC721TokenReceiver::new(to);
             let received = receiver
                 .on_erc_721_received(&mut *storage, msg::sender(), from, token_id, data.into())
-                .map_err(|_e| Erc721Error::ReceiverRefused(ReceiverRefused {
-                    receiver: receiver.address,
-                    token_id,
-                    returned: alloy_primitives::FixedBytes(0_u32.to_be_bytes()),
-                }))?
+                .map_err(|_| "ERC721Receiver: low-level call failed")?
                 .0;
 
             if u32::from_be_bytes(received) != ERC721_TOKEN_RECEIVER_ID {
-                return Err(Erc721Error::ReceiverRefused(ReceiverRefused {
-                    receiver: receiver.address,
-                    token_id,
-                    returned: alloy_primitives::FixedBytes(received),
-                }));
+                return Err("Receiver refused".into());
             }
         }
         Ok(())
@@ -187,19 +152,19 @@ impl<T: Erc721Params> Erc721<T> {
         from: Address,
         to: Address,
         data: Vec<u8>,
-    ) -> Result<(), Erc721Error> {
+    ) -> Result<(), String> {
         storage.borrow_mut().transfer(token_id, from, to)?;
         Self::call_receiver(storage, token_id, from, to, data)
     }
 
-    pub fn mint(&mut self, to: Address) -> Result<(), Erc721Error> {
+    pub fn mint(&mut self, to: Address) -> Result<(), String> {
         let new_token_id = self.total_supply.get();
         self.total_supply.set(new_token_id + U256::from(1u8));
         self.transfer(new_token_id, Address::default(), to)?;
         Ok(())
     }
 
-    pub fn burn(&mut self, from: Address, token_id: U256) -> Result<(), Erc721Error> {
+    pub fn burn(&mut self, from: Address, token_id: U256) -> Result<(), String> {
         self.transfer(token_id, from, Address::default())?;
         Ok(())
     }
@@ -207,28 +172,28 @@ impl<T: Erc721Params> Erc721<T> {
 
 #[public]
 impl<T: Erc721Params> Erc721<T> {
-    pub fn name() -> Result<String, Erc721Error> {
+    pub fn name() -> Result<String, String> {
         Ok(T::NAME.into())
     }
 
-    pub fn symbol() -> Result<String, Erc721Error> {
+    pub fn symbol() -> Result<String, String> {
         Ok(T::SYMBOL.into())
     }
 
     #[selector(name = "tokenURI")]
-    pub fn token_uri(&self, token_id: U256) -> Result<String, Erc721Error> {
+    pub fn token_uri(&self, token_id: U256) -> Result<String, String> {
         self.owner_of(token_id)?;
         Ok(T::token_uri(token_id))
     }
 
-    pub fn balance_of(&self, owner: Address) -> Result<U256, Erc721Error> {
+    pub fn balance_of(&self, owner: Address) -> Result<U256, String> {
         Ok(self.balances.get(owner))
     }
 
-    pub fn owner_of(&self, token_id: U256) -> Result<Address, Erc721Error> {
+    pub fn owner_of(&self, token_id: U256) -> Result<Address, String> {
         let owner = self.owners.get(token_id);
         if owner.is_zero() {
-            return Err(Erc721Error::InvalidTokenId(InvalidTokenId { token_id }));
+            return Err("Invalid token Id".into());
         }
         Ok(owner)
     }
@@ -240,9 +205,9 @@ impl<T: Erc721Params> Erc721<T> {
         to: Address,
         token_id: U256,
         data: Bytes,
-    ) -> Result<(), Erc721Error> {
+    ) -> Result<(), String> {
         if to.is_zero() {
-            return Err(Erc721Error::TransferToZero(TransferToZero { token_id }));
+            return Err("Transfer to zero".into());
         }
         storage
             .borrow_mut()
@@ -257,28 +222,24 @@ impl<T: Erc721Params> Erc721<T> {
         from: Address,
         to: Address,
         token_id: U256,
-    ) -> Result<(), Erc721Error> {
+    ) -> Result<(), String> {
         Self::safe_transfer_from_with_data(storage, from, to, token_id, Bytes(vec![]))
     }
 
-    pub fn transfer_from(&mut self, from: Address, to: Address, token_id: U256) -> Result<(), Erc721Error> {
+    pub fn transfer_from(&mut self, from: Address, to: Address, token_id: U256) -> Result<(), String> {
         if to.is_zero() {
-            return Err(Erc721Error::TransferToZero(TransferToZero { token_id }));
+            return Err("Transfer to zero".into());
         }
         self.require_authorized_to_spend(from, token_id)?;
         self.transfer(token_id, from, to)?;
         Ok(())
     }
 
-    pub fn approve(&mut self, approved: Address, token_id: U256) -> Result<(), Erc721Error> {
+    pub fn approve(&mut self, approved: Address, token_id: U256) -> Result<(), String> {
         let owner = self.owner_of(token_id)?;
 
         if msg::sender() != owner && !self.operator_approvals.getter(owner).get(msg::sender()) {
-            return Err(Erc721Error::NotApproved(NotApproved {
-                owner,
-                spender: msg::sender(),
-                token_id,
-            }));
+            return Err("Not approved".into());
         }
         self.token_approvals.insert(token_id, approved);
 
@@ -290,7 +251,7 @@ impl<T: Erc721Params> Erc721<T> {
         Ok(())
     }
 
-    pub fn set_approval_for_all(&mut self, operator: Address, approved: bool) -> Result<(), Erc721Error> {
+    pub fn set_approval_for_all(&mut self, operator: Address, approved: bool) -> Result<(), String> {
         let owner = msg::sender();
         self.operator_approvals
             .setter(owner)
@@ -304,15 +265,15 @@ impl<T: Erc721Params> Erc721<T> {
         Ok(())
     }
 
-    pub fn get_approved(&mut self, token_id: U256) -> Result<Address, Erc721Error> {
+    pub fn get_approved(&self, token_id: U256) -> Result<Address, String> {
         Ok(self.token_approvals.get(token_id))
     }
 
-    pub fn is_approved_for_all(&mut self, owner: Address, operator: Address) -> Result<bool, Erc721Error> {
+    pub fn is_approved_for_all(&self, owner: Address, operator: Address) -> Result<bool, String> {
         Ok(self.operator_approvals.getter(owner).get(operator))
     }
 
-    pub fn supports_interface(interface: FixedBytes<4>) -> Result<bool, Erc721Error> {
+    pub fn supports_interface(interface: FixedBytes<4>) -> Result<bool, String> {
         let interface_slice_array: [u8; 4] = interface.as_slice().try_into().unwrap();
 
         if u32::from_be_bytes(interface_slice_array) == 0xffffffff {
