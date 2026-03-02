@@ -5,9 +5,7 @@ extern crate alloc;
 mod erc721;
 
 use alloy_primitives::{U256, Address};
-use stylus_sdk::{
-    msg, prelude::*
-};
+use stylus_sdk::prelude::*;
 use crate::erc721::{Erc721, Erc721Params, Ownable};
 
 struct StylusNFTParams;
@@ -31,7 +29,6 @@ sol_storage! {
 }
 
 #[public]
-#[inherit(Erc721<StylusNFTParams>, Ownable)]
 impl StylusNFT {
     #[constructor]
     pub fn constructor(&mut self, owner: Address) {
@@ -44,7 +41,7 @@ impl StylusNFT {
     }
 
     pub fn burn(&mut self, token_id: U256) -> Result<(), String> {
-        self.erc721.burn(msg::sender(), token_id)?;
+        self.erc721.burn(self.vm().msg_sender(), token_id)?;
         Ok(())
     }
 

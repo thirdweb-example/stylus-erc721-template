@@ -1,11 +1,9 @@
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use alloy_primitives::{Address, U256, FixedBytes};
 use alloy_sol_types::sol;
-use core::{borrow::BorrowMut, marker::PhantomData};
+use core::marker::PhantomData;
 use stylus_sdk::{
     abi::Bytes,
-    evm,
-    msg,
     prelude::*
 };
 
@@ -16,7 +14,7 @@ pub trait Erc721Params {
 }
 
 sol_storage! {
-    pub struct Erc721<T: Erc721Params> {
+    pub struct Erc721<T> {
         mapping(uint256 => address) owners;
         mapping(address => uint256) balances;
         mapping(uint256 => address) token_approvals;
@@ -38,7 +36,7 @@ sol! {
 
 sol_interface! {
     interface IERC721TokenReceiver {
-        function onERC721Received(address operator, address from, uint256 token_id, bytes data) external returns(bytes4);
+        function onERC721Received(address operator, address from, uint256 token_id, bytes data) external view returns(bytes4);
     }
 }
 
@@ -88,15 +86,15 @@ impl<T: Erc721Params> Erc721<T> {
             return Err("Not Owner".into());
         }
 
-        if msg::sender() == owner {
+        if self.vm().msg_sender() == owner {
             return Ok(());
         }
 
-        if self.operator_approvals.getter(owner).get(msg::sender()) {
+        if self.operator_approvals.getter(owner).get(self.vm().msg_sender()) {
             return Ok(());
         }
 
-        if msg::sender() == self.token_approvals.get(token_id) {
+        if self.vm().msg_sender() == self.token_approvals.get(token_id) {
             return Ok(());
         }
 
@@ -121,21 +119,22 @@ impl<T: Erc721Params> Erc721<T> {
 
         self.token_approvals.delete(token_id);
         
-        evm::log(Transfer { from, to, token_id });
+        self.vm().log(Transfer { from, to, token_id });
         Ok(())
     }
 
-    fn call_receiver<S: TopLevelStorage>(
-        storage: &mut S,
+    fn call_receiver(
+        &self,
         token_id: U256,
         from: Address,
         to: Address,
         data: Vec<u8>,
     ) -> Result<(), String> {
-        if to.has_code() {
+        if self.vm().code_size(to) > 0 {
+            let sender = self.vm().msg_sender();
             let receiver = IERC721TokenReceiver::new(to);
             let received = receiver
-                .on_erc_721_received(&mut *storage, msg::sender(), from, token_id, data.into())
+                .on_erc_721_received(self.vm(), Call::new(), sender, from, token_id, data.into())
                 .map_err(|_| "ERC721Receiver: low-level call failed")?
                 .0;
 
@@ -146,15 +145,15 @@ impl<T: Erc721Params> Erc721<T> {
         Ok(())
     }
 
-    pub fn safe_transfer<S: TopLevelStorage + BorrowMut<Self>>(
-        storage: &mut S,
+    pub fn safe_transfer(
+        &mut self,
         token_id: U256,
         from: Address,
         to: Address,
         data: Vec<u8>,
     ) -> Result<(), String> {
-        storage.borrow_mut().transfer(token_id, from, to)?;
-        Self::call_receiver(storage, token_id, from, to, data)
+        self.transfer(token_id, from, to)?;
+        self.call_receiver(token_id, from, to, data)
     }
 
     pub fn mint(&mut self, to: Address) -> Result<(), String> {
@@ -199,8 +198,8 @@ impl<T: Erc721Params> Erc721<T> {
     }
 
     #[selector(name = "safeTransferFrom")]
-    pub fn safe_transfer_from_with_data<S: TopLevelStorage + BorrowMut<Self>>(
-        storage: &mut S,
+    pub fn safe_transfer_from_with_data(
+        &mut self,
         from: Address,
         to: Address,
         token_id: U256,
@@ -209,21 +208,18 @@ impl<T: Erc721Params> Erc721<T> {
         if to.is_zero() {
             return Err("Transfer to zero".into());
         }
-        storage
-            .borrow_mut()
-            .require_authorized_to_spend(from, token_id)?;
-
-        Self::safe_transfer(storage, token_id, from, to, data.0)
+        self.require_authorized_to_spend(from, token_id)?;
+        self.safe_transfer(token_id, from, to, data.to_vec())
     }
 
     #[selector(name = "safeTransferFrom")]
-    pub fn safe_transfer_from<S: TopLevelStorage + BorrowMut<Self>>(
-        storage: &mut S,
+    pub fn safe_transfer_from(
+        &mut self,
         from: Address,
         to: Address,
         token_id: U256,
     ) -> Result<(), String> {
-        Self::safe_transfer_from_with_data(storage, from, to, token_id, Bytes(vec![]))
+        self.safe_transfer_from_with_data(from, to, token_id, Bytes::default())
     }
 
     pub fn transfer_from(&mut self, from: Address, to: Address, token_id: U256) -> Result<(), String> {
@@ -238,12 +234,12 @@ impl<T: Erc721Params> Erc721<T> {
     pub fn approve(&mut self, approved: Address, token_id: U256) -> Result<(), String> {
         let owner = self.owner_of(token_id)?;
 
-        if msg::sender() != owner && !self.operator_approvals.getter(owner).get(msg::sender()) {
+        if self.vm().msg_sender() != owner && !self.operator_approvals.getter(owner).get(self.vm().msg_sender()) {
             return Err("Not approved".into());
         }
         self.token_approvals.insert(token_id, approved);
 
-        evm::log(Approval {
+        self.vm().log(Approval {
             approved,
             owner,
             token_id,
@@ -252,12 +248,12 @@ impl<T: Erc721Params> Erc721<T> {
     }
 
     pub fn set_approval_for_all(&mut self, operator: Address, approved: bool) -> Result<(), String> {
-        let owner = msg::sender();
+        let owner = self.vm().msg_sender();
         self.operator_approvals
             .setter(owner)
             .insert(operator, approved);
 
-        evm::log(ApprovalForAll {
+        self.vm().log(ApprovalForAll {
             owner,
             operator,
             approved,
